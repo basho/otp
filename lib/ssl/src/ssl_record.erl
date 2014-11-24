@@ -466,6 +466,8 @@ supported_protocol_versions([_|_] = Vsns) ->
 %%     
 %% Description: ssl version 2 is not acceptable security risks are too big.
 %%--------------------------------------------------------------------
+is_acceptable_version({3,0}) ->
+  false;
 is_acceptable_version({N,_}) 
   when N >= ?LOWEST_MAJOR_SUPPORTED_VERSION ->
     true;
