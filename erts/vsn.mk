@@ -18,7 +18,7 @@
 #
 
 VSN = 5.10.3
-SYSTEM_VSN = R16B02_basho9
+SYSTEM_VSN = R16B02_basho10
 
 # Port number 4365 in 4.2
 # Port number 4366 in 4.3

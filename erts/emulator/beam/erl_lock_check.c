@@ -2,6 +2,7 @@
  * %CopyrightBegin%
  *
  * Copyright Ericsson AB 2005-2013. All Rights Reserved.
+ * Copyright Basho Technologies 2015. All Rights Reserved.
  *
  * The contents of this file are subject to the Erlang Public License,
  * Version 1.1, (the "License"); you may not use this file except in
@@ -137,7 +138,9 @@ static erts_lc_lock_order_t erts_lock_order[] = {
 #ifdef ERTS_SMP
     {	"sys_msg_q", 				NULL			},
     {	"atom_tab",				NULL			},
+#ifdef  ARCH_32
     {	"make_ref",				NULL			},
+#endif
     {	"misc_op_list_pre_alloc_lock",		"address"		},
     {	"message_pre_alloc_lock",		"address"		},
     {	"ptimer_pre_alloc_lock",		"address",		},

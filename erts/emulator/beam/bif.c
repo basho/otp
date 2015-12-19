@@ -2,6 +2,7 @@
  * %CopyrightBegin%
  *
  * Copyright Ericsson AB 1996-2013. All Rights Reserved.
+ * Copyright Basho Technologies 2015. All Rights Reserved.
  *
  * The contents of this file are subject to the Erlang Public License,
  * Version 1.1, (the "License"); you may not use this file except in
@@ -3436,16 +3437,31 @@ BIF_RETTYPE self_0(BIF_ALIST_0)
    hash value.
 */
 
-static Uint32 reference0; /* Initialized in erts_init_bif */
+/* Initialized in erts_init_bif */
+#ifdef  ARCH_64
+static erts_atomic_t
+    last_ref[(ERTS_CACHE_LINE_SIZE) / sizeof(erts_atomic_t)]
+    erts_align_attribute(ERTS_CACHE_LINE_SIZE);
+#else   /* ARCH_32 */
+static Uint32 reference0;
 static Uint32 reference1;
 static Uint32 reference2;
 static erts_smp_spinlock_t make_ref_lock;
+#endif  /* ARCH_nn */
+
 static erts_smp_mtx_t ports_snapshot_mtx;
 erts_smp_atomic_t erts_dead_ports_ptr; /* To store dying ports during snapshot */
 
 void
 erts_make_ref_in_array(Uint32 ref[ERTS_MAX_REF_NUMBERS])
 {
+#ifdef  ARCH_64
+    Uint64 val = erts_atomic_inc_read_mb(last_ref);
+
+    ref[0] = (Uint32) (val & REF_MASK);
+    ref[1] = (Uint32) (val >> _REF_NUM_SIZE);
+    ref[2] = (Uint32) (val >> (_REF_NUM_SIZE + 32u));
+#else   /* ARCH_32 */
     erts_smp_spin_lock(&make_ref_lock);
 
     reference0++;
@@ -3462,6 +3478,7 @@ erts_make_ref_in_array(Uint32 ref[ERTS_MAX_REF_NUMBERS])
     ref[2] = reference2;
 
     erts_smp_spin_unlock(&make_ref_lock);
+#endif  /* ARCH_nn */
 }
 
 Eterm erts_make_ref_in_buffer(Eterm buffer[REF_THING_SIZE])
@@ -4757,11 +4774,15 @@ void erts_init_trap_export(Export* ep, Eterm m, Eterm f, Uint a,
 
 void erts_init_bif(void)
 {
+#ifdef  ARCH_64
+    erts_atomic_init_nob(last_ref, 0);
+#else   /* ARCH_32 */
     reference0 = 0;
     reference1 = 0;
     reference2 = 0;
 
     erts_smp_spinlock_init(&make_ref_lock, "make_ref");
+#endif  /* ARCH_nn */
     erts_smp_mtx_init(&ports_snapshot_mtx, "ports_snapshot");
     erts_smp_atomic_init_nob(&erts_dead_ports_ptr, (erts_aint_t) NULL);
 

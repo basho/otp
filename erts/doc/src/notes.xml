@@ -7,6 +7,10 @@
       <year>2004</year><year>2013</year>
       <holder>Ericsson AB. All Rights Reserved.</holder>
     </copyright>
+    <copyright>
+      <year>2015</year>
+      <holder>Basho Technologies. All Rights Reserved.</holder>
+    </copyright>
     <legalnotice>
       The contents of this file are subject to the Erlang Public License,
       Version 1.1, (the "License"); you may not use this file except in
@@ -29,6 +33,22 @@
     <file>notes.xml</file>
   </header>
   <p>This document describes the changes made to the ERTS application.</p>
+
+<section><title>Erts 5.10.3-basho10</title>
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+            <c>erlang:make_ref/0</c> is changed to use an atomic counter on
+            64-bit platforms.
+          </p>
+          <p>Basho Id: OTP-51</p>
+        </item>
+      </list>
+    </section>
+
+</section>
 
 <section><title>Erts 5.10.3</title>
 
