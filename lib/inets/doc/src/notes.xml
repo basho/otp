@@ -33,7 +33,75 @@
     <file>notes.xml</file>
   </header>
   
-  <section><title>Inets 6.1</title>
+  <section><title>Inets 6.2.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    Mend ipv6_host_with_brackets option in httpc</p>
+          <p>
+	    Own Id: OTP-13417</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Inets 6.2</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    The TFTP client/server has been fixed to allow file sizes
+	    larger than 32MB block by allowing the 16 bit block
+	    counter to wrap. Since this is a commonly accepted
+	    behavior we regard it as a bug fix.</p>
+          <p>
+	    Own Id: OTP-13403</p>
+        </item>
+      </list>
+    </section>
+
+
+    <section><title>Improvements and New Features</title>
+      <list>
+        <item>
+          <p>
+	    Handle HTTP PATCH method in client.</p>
+          <p>
+	    Own Id: OTP-13286</p>
+        </item>
+        <item>
+          <p>
+	    Expected termination should not be logged as an
+	    application error.</p>
+          <p>
+	    Own Id: OTP-13389</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Inets 6.1.1</title>
+
+    <section><title>Fixed Bugs and Malfunctions</title>
+      <list>
+        <item>
+          <p>
+	    mod_alias now traverses all aliases picking the longest
+	    match and not the first match.</p>
+          <p>
+	    Own Id: OTP-13248</p>
+        </item>
+      </list>
+    </section>
+
+</section>
+
+<section><title>Inets 6.1</title>
 
     <section><title>Fixed Bugs and Malfunctions</title>
       <list>

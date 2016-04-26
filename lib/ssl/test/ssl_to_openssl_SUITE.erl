@@ -175,7 +175,12 @@ special_init(TestCase, Config)
     check_sane_openssl_renegotaite(Config, Version);
 
 special_init(ssl2_erlang_server_openssl_client, Config) ->
-    check_sane_openssl_sslv2(Config);
+    case ssl_test_lib:supports_ssl_tls_version(sslv2) of
+	true ->
+	     Config;
+	false ->
+	     {skip, "sslv2 not supported by openssl"}
+    end;
 
 special_init(TestCase, Config)
     when TestCase == erlang_client_alpn_openssl_server_alpn;
@@ -1263,8 +1268,12 @@ client_check_result(Port, DataExpected) ->
 
 send_and_hostname(SSLSocket) ->
     ssl:send(SSLSocket, "OK"),
-    {ok, [{sni_hostname, Hostname}]} = ssl:connection_information(SSLSocket, [sni_hostname]),
-    Hostname.
+    case ssl:connection_information(SSLSocket, [sni_hostname]) of
+	{ok, []} ->
+	    undefined;
+	{ok, [{sni_hostname, Hostname}]} ->
+	    Hostname
+    end.
 
 erlang_server_openssl_client_sni_test(Config, SNIHostname, ExpectedSNIHostname, ExpectedCN) ->
     ct:log("Start running handshake, Config: ~p, SNIHostname: ~p, ExpectedSNIHostname: ~p, ExpectedCN: ~p", [Config, SNIHostname, ExpectedSNIHostname, ExpectedCN]),
@@ -1440,7 +1449,7 @@ start_erlang_client_and_openssl_server_for_alpn_negotiation(Config, Data, Callba
 
     Exe = "openssl",
     Args = ["s_server", "-msg", "-alpn", "http/1.1,spdy/2", "-accept", integer_to_list(Port), ssl_test_lib:version_flag(Version),
-	    "-cert", CertFile, "-key" ++ KeyFile],
+	    "-cert", CertFile, "-key", KeyFile],
     OpensslPort = ssl_test_lib:portable_open_port(Exe, Args),  
     ssl_test_lib:wait_for_openssl_server(Port),
 
@@ -1475,7 +1484,7 @@ start_erlang_server_and_openssl_client_for_alpn_negotiation(Config, Data, Callba
     Version = tls_record:protocol_version(tls_record:highest_protocol_version([])),
 
     Exe = "openssl",
-    Args = ["s_client", "-alpn", "http/1.0,spdy/2" "-msg" "-port", 
+    Args = ["s_client", "-alpn", "http/1.0,spdy/2", "-msg", "-port", 
 	    integer_to_list(Port), ssl_test_lib:version_flag(Version),
 	    "-host", "localhost"],
 
@@ -1507,7 +1516,7 @@ start_erlang_client_and_openssl_server_for_alpn_npn_negotiation(Config, Data, Ca
     Exe = "openssl",
     Args = ["s_server", "-msg", "-alpn", "http/1.1,spdy/2", "-nextprotoneg", 
 	    "spdy/3", "-accept", integer_to_list(Port), ssl_test_lib:version_flag(Version),
-	    "-cert" ++ CertFile  ++ "-key" ++ KeyFile],
+	    "-cert", CertFile, "-key",  KeyFile],
 
     OpensslPort = ssl_test_lib:portable_open_port(Exe, Args),  
 
@@ -1754,32 +1763,6 @@ check_sane_openssl_renegotaite(Config) ->
 	    {skip, "Known renegotiation bug in OpenSSL"};
 	_ ->
 	    Config
-    end.
-
-check_sane_openssl_sslv2(Config) ->
-    Exe = "openssl",
-    Args = ["s_client", "-ssl2"],
-    Port = ssl_test_lib:portable_open_port(Exe, Args),
-    case supports_sslv2(Port) of
-	true ->
-	    Config;
-	false ->
-	    {skip, "sslv2 not supported by openssl"}
-    end.
-
-supports_sslv2(Port) ->
-    receive 
-	{Port, {data, "unknown option -ssl2" ++ _}} -> 
-	    false;
-	{Port, {data, Data}} ->
-	    case lists:member("error", string:tokens(Data, ":")) of
-		true ->
-		    false;
-		false ->
-		    supports_sslv2(Port)
-	    end
-    after 500 ->
-	    true
     end.
 
 workaround_openssl_s_clinent() ->
