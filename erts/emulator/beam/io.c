@@ -50,6 +50,7 @@
 #include "erl_map.h"
 #include "erl_bif_unique.h"
 #include "erl_hl_timer.h"
+#include "erl_time.h"
 
 extern ErlDrvEntry fd_driver_entry;
 #ifndef __OSE__
@@ -1528,8 +1529,19 @@ erts_schedule_proc2port_signal(Process *c_p,
 	erts_smp_proc_lock(c_p, ERTS_PROC_LOCK_MAIN);
 
     if (sched_res != 0) {
-	if (refp)
+	if (refp) {
+	    /*
+	     * We need to restore the message queue save
+	     * pointer to the beginning of the message queue
+	     * since the caller now wont wait for a message
+	     * containing the reference created above...
+	     */
+	    ASSERT(c_p);
+	    erts_smp_proc_lock(c_p, ERTS_PROC_LOCKS_MSG_RECEIVE);
+	    JOIN_MESSAGE(c_p);
+	    erts_smp_proc_unlock(c_p, ERTS_PROC_LOCKS_MSG_RECEIVE);
 	    *refp = NIL;
+	}
 	return ERTS_PORT_OP_DROPPED;
     }
     return ERTS_PORT_OP_SCHEDULED;
@@ -3466,7 +3478,7 @@ terminate_port(Port *prt)
     if ((state & ERTS_PORT_SFLG_HALT)
 	&& (erts_smp_atomic32_dec_read_nob(&erts_halt_progress) == 0)) {
 	erts_port_release(prt); /* We will exit and never return */
-	erl_exit_flush_async(erts_halt_code, "");
+	erts_flush_async_exit(erts_halt_code, "");
     }
     if (is_internal_port(send_closed_port_id))
 	deliver_result(send_closed_port_id, connected_id, am_closed);
@@ -4881,7 +4893,7 @@ void erts_raw_port_command(Port* p, byte* buf, Uint len)
     ERTS_SMP_LC_ASSERT(erts_lc_is_port_locked(p));
 
     if (len > (Uint) INT_MAX)
-	erl_exit(ERTS_ABORT_EXIT,
+	erts_exit(ERTS_ABORT_EXIT,
 		 "Absurdly large data buffer (%beu bytes) passed to"
 		 "output callback of %s driver.\n",
 		 len,
@@ -6762,6 +6774,28 @@ driver_get_now(ErlDrvNowData *now_data)
     return 0;
 }
 
+ErlDrvTime
+erl_drv_monotonic_time(ErlDrvTimeUnit time_unit)
+{
+    return (ErlDrvTime) erts_napi_monotonic_time((int) time_unit);
+}
+
+ErlDrvTime
+erl_drv_time_offset(ErlDrvTimeUnit time_unit)
+{
+    return (ErlDrvTime) erts_napi_time_offset((int) time_unit);
+}
+
+ErlDrvTime
+erl_drv_convert_time_unit(ErlDrvTime val,
+			  ErlDrvTimeUnit from,
+			  ErlDrvTimeUnit to)
+{
+    return (ErlDrvTime) erts_napi_convert_time_unit((ErtsMonotonicTime) val,
+						    (int) from,
+						    (int) to);
+}
+
 static void ref_to_driver_monitor(Eterm ref, ErlDrvMonitor *mon)
 {
     RefThing *refp;
@@ -7289,7 +7323,7 @@ driver_system_info(ErlDrvSysInfo *sip, size_t si_size)
      * of ErlDrvSysInfo (introduced in driver version 1.0).
      */
     if (!sip || si_size < ERL_DRV_SYS_INFO_SIZE(smp_support)) 
-	erl_exit(1,
+	erts_exit(ERTS_ERROR_EXIT,
 		 "driver_system_info(%p, %ld) called with invalid arguments\n",
 		 sip, si_size);
 
