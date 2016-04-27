@@ -20,7 +20,7 @@
 -module(ssl_tls_dist_proxy).
 
 
--export([listen/1, accept/1, connect/2, get_tcp_address/1]).
+-export([listen/2, accept/2, connect/3, get_tcp_address/1]).
 -export([init/1, start_link/0, handle_call/3, handle_cast/2, handle_info/2, 
 	 terminate/2, code_change/3, ssl_options/2]).
 
@@ -39,14 +39,14 @@
 %% Internal application API
 %%====================================================================
 
-listen(Name) ->
-    gen_server:call(?MODULE, {listen, Name}, infinity). 
+listen(Driver, Name) ->
+    gen_server:call(?MODULE, {listen, Driver, Name}, infinity).
 
-accept(Listen) ->
-    gen_server:call(?MODULE, {accept, Listen}, infinity).
+accept(Driver, Listen) ->
+    gen_server:call(?MODULE, {accept, Driver, Listen}, infinity).
 
-connect(Ip, Port) ->
-    gen_server:call(?MODULE, {connect, Ip, Port}, infinity).
+connect(Driver, Ip, Port) ->
+    gen_server:call(?MODULE, {connect, Driver, Ip, Port}, infinity).
 
 
 do_listen(Options) ->
@@ -89,6 +89,14 @@ listen_options(Opts0) ->
             Opts1
     end.
 
+connect_options(Opts) ->
+    case application:get_env(kernel, inet_dist_connect_options) of
+	{ok,ConnectOpts} ->
+	    lists:ukeysort(1, ConnectOpts ++ Opts);
+	_ ->
+	    Opts
+    end.
+
 %%====================================================================
 %% gen_server callbacks
 %%====================================================================
@@ -100,10 +108,11 @@ init([]) ->
     process_flag(priority, max),
     {ok, #state{}}.
 
-handle_call({listen, Name}, _From, State) ->
-    case gen_tcp:listen(0, [{active, false}, {packet,?PPRE}]) of
+handle_call({listen, Driver, Name}, _From, State) ->
+    case gen_tcp:listen(0, [{active, false}, {packet,?PPRE}, {ip, loopback}]) of
 	{ok, Socket} ->
-	    {ok, World} = do_listen([{active, false}, binary, {packet,?PPRE}, {reuseaddr, true}]),
+	    {ok, World} = do_listen([{active, false}, binary, {packet,?PPRE}, {reuseaddr, true},
+                                     Driver:family()]),
 	    {ok, TcpAddress} = get_tcp_address(Socket),
 	    {ok, WorldTcpAddress} = get_tcp_address(World),
 	    {_,Port} = WorldTcpAddress#net_address.address,
@@ -118,15 +127,15 @@ handle_call({listen, Name}, _From, State) ->
 	    {reply, Error, State}
     end;
 
-handle_call({accept, Listen}, {From, _}, State = #state{listen={_, World}}) ->
+handle_call({accept, _Driver, Listen}, {From, _}, State = #state{listen={_, World}}) ->
     Self = self(),
     ErtsPid = spawn_link(fun() -> accept_loop(Self, erts, Listen, From) end),
     WorldPid = spawn_link(fun() -> accept_loop(Self, world, World, Listen) end),
     {reply, ErtsPid, State#state{accept_loop={ErtsPid, WorldPid}}};
 
-handle_call({connect, Ip, Port}, {From, _}, State) ->
+handle_call({connect, Driver, Ip, Port}, {From, _}, State) ->
     Me = self(),
-    Pid = spawn_link(fun() -> setup_proxy(Ip, Port, Me) end),
+    Pid = spawn_link(fun() -> setup_proxy(Driver, Ip, Port, Me) end),
     receive 
 	{Pid, go_ahead, LPort} -> 
 	    Res = {ok, Socket} = try_connect(LPort),
@@ -196,6 +205,7 @@ accept_loop(Proxy, world = Type, Listen, Extra) ->
     case gen_tcp:accept(Listen) of
 	{ok, Socket} ->
 	    Opts = get_ssl_options(server),
+	    wait_for_code_server(),
 	    case ssl:ssl_accept(Socket, Opts) of
 		{ok, SslSocket} ->
 		    PairHandler =
@@ -204,6 +214,11 @@ accept_loop(Proxy, world = Type, Listen, Extra) ->
 				   end),
 		    ok = ssl:controlling_process(SslSocket, PairHandler),
 		    flush_old_controller(PairHandler, SslSocket);
+		{error, {options, _}} = Error ->
+		    %% Bad options: that's probably our fault.  Let's log that.
+		    error_logger:error_msg("Cannot accept TLS distribution connection: ~s~n",
+					   [ssl:format_error(Error)]),
+		    gen_tcp:close(Socket);
 		_ ->
 		    gen_tcp:close(Socket)
 	    end;
@@ -211,6 +226,35 @@ accept_loop(Proxy, world = Type, Listen, Extra) ->
 	    exit(Error)
     end,
     accept_loop(Proxy, Type, Listen, Extra).
+
+wait_for_code_server() ->
+    %% This is an ugly hack.  Upgrading a socket to TLS requires the
+    %% crypto module to be loaded.  Loading the crypto module triggers
+    %% its on_load function, which calls code:priv_dir/1 to find the
+    %% directory where its NIF library is.  However, distribution is
+    %% started earlier than the code server, so the code server is not
+    %% necessarily started yet, and code:priv_dir/1 might fail because
+    %% of that, if we receive an incoming connection on the
+    %% distribution port early enough.
+    %%
+    %% If the on_load function of a module fails, the module is
+    %% unloaded, and the function call that triggered loading it fails
+    %% with 'undef', which is rather confusing.
+    %%
+    %% Thus, the ssl_tls_dist_proxy process will terminate, and be
+    %% restarted by ssl_dist_sup.  However, it won't have any memory
+    %% of being asked by net_kernel to listen for incoming
+    %% connections.  Hence, the node will believe that it's open for
+    %% distribution, but it actually isn't.
+    %%
+    %% So let's avoid that by waiting for the code server to start.
+    case whereis(code_server) of
+	undefined ->
+	    timer:sleep(10),
+	    wait_for_code_server();
+	Pid when is_pid(Pid) ->
+	    ok
+    end.
 
 try_connect(Port) ->
     case gen_tcp:connect({127,0,0,1}, Port, [{active, false}, {packet,?PPRE}, nodelay()]) of
@@ -220,12 +264,13 @@ try_connect(Port) ->
 	    try_connect(Port)
     end.
 
-setup_proxy(Ip, Port, Parent) ->
+setup_proxy(Driver, Ip, Port, Parent) ->
     process_flag(trap_exit, true),
-    Opts = get_ssl_options(client),
-    case ssl:connect(Ip, Port, [{active, true}, binary, {packet,?PPRE}, nodelay()] ++ Opts) of
+    Opts = connect_options(get_ssl_options(client)),
+    case ssl:connect(Ip, Port, [{active, true}, binary, {packet,?PPRE}, nodelay(),
+                                Driver:family()] ++ Opts) of
 	{ok, World} ->
-	    {ok, ErtsL} = gen_tcp:listen(0, [{active, true}, {ip, {127,0,0,1}}, binary, {packet,?PPRE}]),
+	    {ok, ErtsL} = gen_tcp:listen(0, [{active, true}, {ip, loopback}, binary, {packet,?PPRE}]),
 	    {ok, #net_address{address={_,LPort}}} = get_tcp_address(ErtsL),
 	    Parent ! {self(), go_ahead, LPort},
 	    case gen_tcp:accept(ErtsL) of
@@ -235,6 +280,11 @@ setup_proxy(Ip, Port, Parent) ->
 		Err ->
 		    Parent ! {self(), Err}
 	    end;
+	{error, {options, _}} = Err ->
+	    %% Bad options: that's probably our fault.  Let's log that.
+	    error_logger:error_msg("Cannot open TLS distribution connection: ~s~n",
+				   [ssl:format_error(Err)]),
+	    Parent ! {self(), Err};
 	Err ->
 	    Parent ! {self(), Err}
     end.

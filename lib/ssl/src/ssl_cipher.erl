@@ -34,6 +34,7 @@
 -include_lib("public_key/include/public_key.hrl").
 
 -export([security_parameters/2, security_parameters/3, suite_definition/1,
+	 erl_suite_definition/1,
 	 cipher_init/3, decipher/6, cipher/5, decipher_aead/6, cipher_aead/6,
 	 suite/1, suites/1, all_suites/1, 
 	 ec_keyed_suites/0, anonymous_suites/1, psk_suites/1, srp_suites/0,
@@ -42,14 +43,18 @@
 
 -export_type([cipher_suite/0,
 	      erl_cipher_suite/0, openssl_cipher_suite/0,
-	      key_algo/0]).
+	      hash/0, key_algo/0, sign_algo/0]).
 
 -type cipher()            :: null |rc4_128 | idea_cbc | des40_cbc | des_cbc | '3des_ede_cbc' 
 			   | aes_128_cbc |  aes_256_cbc | aes_128_gcm | aes_256_gcm | chacha20_poly1305.
 -type hash()              :: null | sha | md5 | sha224 | sha256 | sha384 | sha512.
+-type sign_algo()         :: rsa | dsa | ecdsa.
 -type key_algo()          :: null | rsa | dhe_rsa | dhe_dss | ecdhe_ecdsa| ecdh_ecdsa | ecdh_rsa| srp_rsa| srp_dss | psk | dhe_psk | rsa_psk | dh_anon | ecdh_anon | srp_anon.
--type erl_cipher_suite()  :: {key_algo(), cipher(), hash()}.
--type int_cipher_suite()  :: {key_algo(), cipher(), hash(), hash() | default_prf}.
+-type erl_cipher_suite()  :: {key_algo(), cipher(), hash()} % Pre TLS 1.2 
+			     %% TLS 1.2, internally PRE TLS 1.2 will use default_prf
+			   | {key_algo(), cipher(), hash(), hash() | default_prf}. 
+
+ 
 -type cipher_suite()      :: binary().
 -type cipher_enum()        :: integer().
 -type openssl_cipher_suite()  :: string().
@@ -417,7 +422,7 @@ rc4_suites({3, N}) when N =< 3 ->
      ?TLS_ECDH_RSA_WITH_RC4_128_SHA].
 
 %%--------------------------------------------------------------------
--spec suite_definition(cipher_suite()) -> int_cipher_suite().
+-spec suite_definition(cipher_suite()) -> erl_cipher_suite().
 %%
 %% Description: Return erlang cipher suite definition.
 %% Note: Currently not supported suites are commented away.
@@ -722,6 +727,20 @@ suite_definition(?TLS_DHE_RSA_WITH_CHACHA20_POLY1305_SHA256) ->
     {dhe_rsa, chacha20_poly1305, null, sha256}.
 
 %%--------------------------------------------------------------------
+-spec erl_suite_definition(cipher_suite()) -> erl_cipher_suite().
+%%
+%% Description: Return erlang cipher suite definition. Filters last value
+%% for now (compatibility reasons).
+%%--------------------------------------------------------------------
+erl_suite_definition(S) ->
+    case suite_definition(S) of
+	{KeyExchange, Cipher, Hash, default_prf} ->
+	    {KeyExchange, Cipher, Hash};
+	Suite ->
+	    Suite
+    end.
+
+%%--------------------------------------------------------------------
 -spec suite(erl_cipher_suite()) -> cipher_suite().
 %%
 %% Description: Return TLS cipher suite definition.
@@ -823,17 +842,17 @@ suite({rsa_psk, aes_256_cbc,sha}) ->
 
 %%% TLS 1.2 PSK Cipher Suites RFC 5487
 
-suite({psk, aes_128_gcm, null}) ->
+suite({psk, aes_128_gcm, null, sha256}) ->
     ?TLS_PSK_WITH_AES_128_GCM_SHA256;
-suite({psk, aes_256_gcm, null}) ->
+suite({psk, aes_256_gcm, null, sha384}) ->
     ?TLS_PSK_WITH_AES_256_GCM_SHA384;
-suite({dhe_psk, aes_128_gcm, null}) ->
+suite({dhe_psk, aes_128_gcm, null, sha256}) ->
     ?TLS_DHE_PSK_WITH_AES_128_GCM_SHA256;
-suite({dhe_psk, aes_256_gcm, null}) ->
+suite({dhe_psk, aes_256_gcm, null, sha384}) ->
     ?TLS_DHE_PSK_WITH_AES_256_GCM_SHA384;
-suite({rsa_psk, aes_128_gcm, null}) ->
+suite({rsa_psk, aes_128_gcm, null, sha256}) ->
     ?TLS_RSA_PSK_WITH_AES_128_GCM_SHA256;
-suite({rsa_psk, aes_256_gcm, null}) ->
+suite({rsa_psk, aes_256_gcm, null, sha384}) ->
     ?TLS_RSA_PSK_WITH_AES_256_GCM_SHA384;
 
 suite({psk, aes_128_cbc, sha256}) ->
@@ -940,74 +959,74 @@ suite({ecdh_anon, aes_256_cbc, sha}) ->
     ?TLS_ECDH_anon_WITH_AES_256_CBC_SHA;
 
 %%% RFC 5289 EC TLS suites
-suite({ecdhe_ecdsa, aes_128_cbc, sha256}) ->
+suite({ecdhe_ecdsa, aes_128_cbc, sha256, sha256}) ->
     ?TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256;
-suite({ecdhe_ecdsa, aes_256_cbc, sha384}) ->
+suite({ecdhe_ecdsa, aes_256_cbc, sha384, sha384}) ->
     ?TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384;
-suite({ecdh_ecdsa, aes_128_cbc, sha256}) ->
+suite({ecdh_ecdsa, aes_128_cbc, sha256, sha256}) ->
     ?TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA256;
-suite({ecdh_ecdsa, aes_256_cbc, sha384}) ->
+suite({ecdh_ecdsa, aes_256_cbc, sha384, sha384}) ->
     ?TLS_ECDH_ECDSA_WITH_AES_256_CBC_SHA384;
-suite({ecdhe_rsa, aes_128_cbc, sha256}) ->
+suite({ecdhe_rsa, aes_128_cbc, sha256, sha256}) ->
     ?TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256;
-suite({ecdhe_rsa, aes_256_cbc, sha384}) ->
+suite({ecdhe_rsa, aes_256_cbc, sha384, sha384}) ->
     ?TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384;
-suite({ecdh_rsa, aes_128_cbc, sha256}) ->
+suite({ecdh_rsa, aes_128_cbc, sha256, sha256}) ->
     ?TLS_ECDH_RSA_WITH_AES_128_CBC_SHA256;
-suite({ecdh_rsa, aes_256_cbc, sha384}) ->
+suite({ecdh_rsa, aes_256_cbc, sha384, sha384}) ->
     ?TLS_ECDH_RSA_WITH_AES_256_CBC_SHA384;
 
 %% RFC 5288 AES-GCM Cipher Suites
-suite({rsa, aes_128_gcm, null}) ->
+suite({rsa, aes_128_gcm, null, sha256}) ->
     ?TLS_RSA_WITH_AES_128_GCM_SHA256;
 suite({rsa, aes_256_gcm, null}) ->
     ?TLS_RSA_WITH_AES_256_GCM_SHA384;
-suite({dhe_rsa, aes_128_gcm, null}) ->
+suite({dhe_rsa, aes_128_gcm, null, sha384}) ->
     ?TLS_DHE_RSA_WITH_AES_128_GCM_SHA256;
-suite({dhe_rsa, aes_256_gcm, null}) ->
+suite({dhe_rsa, aes_256_gcm, null, sha256}) ->
     ?TLS_DHE_RSA_WITH_AES_256_GCM_SHA384;
-suite({dh_rsa, aes_128_gcm, null}) ->
+suite({dh_rsa, aes_128_gcm, null, sha384}) ->
     ?TLS_DH_RSA_WITH_AES_128_GCM_SHA256;
-suite({dh_rsa, aes_256_gcm, null}) ->
+suite({dh_rsa, aes_256_gcm, null, sha256}) ->
     ?TLS_DH_RSA_WITH_AES_256_GCM_SHA384;
-suite({dhe_dss, aes_128_gcm, null}) ->
+suite({dhe_dss, aes_128_gcm, null, sha384}) ->
     ?TLS_DHE_DSS_WITH_AES_128_GCM_SHA256;
-suite({dhe_dss, aes_256_gcm, null}) ->
+suite({dhe_dss, aes_256_gcm, null, sha256}) ->
     ?TLS_DHE_DSS_WITH_AES_256_GCM_SHA384;
-suite({dh_dss, aes_128_gcm, null}) ->
+suite({dh_dss, aes_128_gcm, null, sha384}) ->
     ?TLS_DH_DSS_WITH_AES_128_GCM_SHA256;
-suite({dh_dss, aes_256_gcm, null}) ->
+suite({dh_dss, aes_256_gcm, null, sha384}) ->
     ?TLS_DH_DSS_WITH_AES_256_GCM_SHA384;
-suite({dh_anon, aes_128_gcm, null}) ->
+suite({dh_anon, aes_128_gcm, null, sha256}) ->
     ?TLS_DH_anon_WITH_AES_128_GCM_SHA256;
-suite({dh_anon, aes_256_gcm, null}) ->
+suite({dh_anon, aes_256_gcm, null, sha384}) ->
     ?TLS_DH_anon_WITH_AES_256_GCM_SHA384;
 
 %% RFC 5289 ECC AES-GCM Cipher Suites
-suite({ecdhe_ecdsa, aes_128_gcm, null}) ->
+suite({ecdhe_ecdsa, aes_128_gcm, null, sha256}) ->
     ?TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256;
-suite({ecdhe_ecdsa, aes_256_gcm, null}) ->
+suite({ecdhe_ecdsa, aes_256_gcm, null, sha384}) ->
     ?TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384;
-suite({ecdh_ecdsa, aes_128_gcm, null}) ->
+suite({ecdh_ecdsa, aes_128_gcm, null, sha256}) ->
     ?TLS_ECDH_ECDSA_WITH_AES_128_GCM_SHA256;
-suite({ecdh_ecdsa, aes_256_gcm, null}) ->
+suite({ecdh_ecdsa, aes_256_gcm, null, sha384}) ->
     ?TLS_ECDH_ECDSA_WITH_AES_256_GCM_SHA384;
-suite({ecdhe_rsa, aes_128_gcm, null}) ->
+suite({ecdhe_rsa, aes_128_gcm, null, sha256}) ->
     ?TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256;
-suite({ecdhe_rsa, aes_256_gcm, null}) ->
+suite({ecdhe_rsa, aes_256_gcm, null, sha384}) ->
     ?TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384;
-suite({ecdh_rsa, aes_128_gcm, null}) ->
+suite({ecdh_rsa, aes_128_gcm, null, sha256}) ->
     ?TLS_ECDH_RSA_WITH_AES_128_GCM_SHA256;
-suite({ecdh_rsa, aes_256_gcm, null}) ->
+suite({ecdh_rsa, aes_256_gcm, null, sha384}) ->
     ?TLS_ECDH_RSA_WITH_AES_256_GCM_SHA384;
 
 
 %% draft-agl-tls-chacha20poly1305-04 Chacha20/Poly1305 Suites
-suite({ecdhe_rsa, chacha20_poly1305, null}) ->
+suite({ecdhe_rsa, chacha20_poly1305, null, sha256}) ->
     ?TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256;
-suite({ecdhe_ecdsa, chacha20_poly1305, null}) ->
+suite({ecdhe_ecdsa, chacha20_poly1305, null, sha256}) ->
     ?TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256;
-suite({dhe_rsa, chacha20_poly1305, null}) ->
+suite({dhe_rsa, chacha20_poly1305, null, sha256}) ->
     ?TLS_DHE_RSA_WITH_CHACHA20_POLY1305_SHA256.
 
 %%--------------------------------------------------------------------
@@ -1384,18 +1403,14 @@ filter(DerCert, Ciphers) ->
 %%
 %% Description: Filter suites for algorithms supported by crypto.
 %%-------------------------------------------------------------------
-filter_suites(Suites = [{_,_,_}|_]) ->
+filter_suites(Suites = [Value|_]) when is_tuple(Value) ->
     Algos = crypto:supports(),
+    Hashs =  proplists:get_value(hashs, Algos),
     lists:filter(fun({KeyExchange, Cipher, Hash}) ->
 			 is_acceptable_keyexchange(KeyExchange,  proplists:get_value(public_keys, Algos)) andalso
 			     is_acceptable_cipher(Cipher,  proplists:get_value(ciphers, Algos)) andalso
-			     is_acceptable_hash(Hash,  proplists:get_value(hashs, Algos))
-		 end, Suites);
-
-filter_suites(Suites = [{_,_,_,_}|_]) ->
-    Algos = crypto:supports(),
-    Hashs =  proplists:get_value(hashs, Algos),
-    lists:filter(fun({KeyExchange, Cipher, Hash, Prf}) ->
+			     is_acceptable_hash(Hash,  proplists:get_value(hashs, Algos));
+		    ({KeyExchange, Cipher, Hash, Prf}) ->
 			 is_acceptable_keyexchange(KeyExchange, proplists:get_value(public_keys, Algos)) andalso
 			     is_acceptable_cipher(Cipher, proplists:get_value(ciphers, Algos)) andalso
 			     is_acceptable_hash(Hash, Hashs) andalso

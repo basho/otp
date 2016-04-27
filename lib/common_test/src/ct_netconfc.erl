@@ -234,7 +234,6 @@
 %% Internal defines
 %%----------------------------------------------------------------------
 -define(APPLICATION,?MODULE).
--define(VALID_SSH_OPTS,[user, password, user_dir]).
 -define(DEFAULT_STREAM,"NETCONF").
 
 -define(error(ConnName,Report),
@@ -264,6 +263,7 @@
 		session_id,
 		msg_id = 1,
 		hello_status,
+		no_end_tag_buff = <<>>,
 		buff = <<>>,
 		pending = [],    % [#pending]
 		event_receiver}).% pid
@@ -1170,7 +1170,7 @@ handle_msg({Ref,timeout},#state{pending=Pending} = State) ->
 	end,
     %% Halfhearted try to get in correct state, this matches
     %% the implementation before this patch
-    {R,State#state{pending=Pending1, buff= <<>>}}.
+    {R,State#state{pending=Pending1, no_end_tag_buff= <<>>, buff= <<>>}}.
 
 %% @private
 %% Called by ct_util_server to close registered connections before terminate.
@@ -1205,7 +1205,7 @@ call(Client, Msg, Timeout, WaitStop) ->
 		    {error,no_such_client};
 		{error,{process_down,Pid,normal}} when WaitStop ->
 		    %% This will happen when server closes connection
-		    %% before clien received rpc-reply on
+		    %% before client received rpc-reply on
 		    %% close-session.
 		    ok;
 		{error,{process_down,Pid,normal}} ->
@@ -1256,13 +1256,11 @@ check_options([{port,Port}|T], Host, _, #options{} = Options) ->
 check_options([{timeout, Timeout}|T], Host, Port, Options)
   when is_integer(Timeout); Timeout==infinity ->
     check_options(T, Host, Port, Options#options{timeout = Timeout});
-check_options([{X,_}=Opt|T], Host, Port, #options{ssh=SshOpts}=Options) ->
-    case lists:member(X,?VALID_SSH_OPTS) of
-	true ->
-	    check_options(T, Host, Port, Options#options{ssh=[Opt|SshOpts]});
-	false ->
-	    {error, {invalid_option, Opt}}
-    end.
+check_options([{timeout, _} = Opt|_T], _Host, _Port, _Options) ->
+    {error, {invalid_option, Opt}};
+check_options([Opt|T], Host, Port, #options{ssh=SshOpts}=Options) ->
+    %% Option verified by ssh
+    check_options(T, Host, Port, Options#options{ssh=[Opt|SshOpts]}).
 
 %%%-----------------------------------------------------------------
 set_request_timer(infinity) ->
@@ -1372,24 +1370,37 @@ to_xml_doc(Simple) ->
 
 %%%-----------------------------------------------------------------
 %%% Parse and handle received XML data
-handle_data(NewData,#state{connection=Connection,buff=Buff0} = State0) ->
+%%% Two buffers are used:
+%%%   * 'no_end_tag_buff' contains data that is checked and does not
+%%%     contain any (part of an) end tag.
+%%%   * 'buff' contains all other saved data - it may or may not
+%%%     include (a part of) an end tag.
+%%% The reason for this is to avoid running binary:split/3 multiple
+%%% times on the same data when it does not contain an end tag. This
+%%% can be a considerable optimation in the case when a lot of data is
+%%% received (e.g. when fetching all data from a node) and the data is
+%%% sent in multiple ssh packages.
+handle_data(NewData,#state{connection=Connection} = State0) ->
     log(Connection,recv,NewData),
-    {Start,AddSz} =
-	case byte_size(Buff0) of
-	    BSz when BSz<5 -> {0,BSz};
-	    BSz -> {BSz-5,5}
-	end,
-    Length = byte_size(NewData) + AddSz,
+    NoEndTag0 = State0#state.no_end_tag_buff,
+    Buff0 = State0#state.buff,
     Data = <<Buff0/binary, NewData/binary>>,
-    case binary:split(Data,?END_TAG,[{scope,{Start,Length}}]) of
+    case binary:split(Data,?END_TAG,[]) of
 	[_NoEndTagFound] ->
-	    {noreply, State0#state{buff=Data}};
+	    NoEndTagSize = case byte_size(Data) of
+			       Sz when Sz<5 -> 0;
+			       Sz -> Sz-5
+			   end,
+	    <<NoEndTag1:NoEndTagSize/binary,Buff/binary>> = Data,
+	    NoEndTag = <<NoEndTag0/binary,NoEndTag1/binary>>,
+	    {noreply, State0#state{no_end_tag_buff=NoEndTag, buff=Buff}};
 	[FirstMsg0,Buff1] ->
-	    FirstMsg = remove_initial_nl(FirstMsg0),
+	    FirstMsg = remove_initial_nl(<<NoEndTag0/binary,FirstMsg0/binary>>),
 	    SaxArgs = [{event_fun,fun sax_event/3}, {event_state,[]}],
 	    case xmerl_sax_parser:stream(FirstMsg, SaxArgs) of
 		{ok, Simple, _Thrash} ->
-		    case decode(Simple, State0#state{buff=Buff1}) of
+		    case decode(Simple, State0#state{no_end_tag_buff= <<>>,
+						     buff=Buff1}) of
 			{noreply, #state{buff=Buff} = State} when Buff =/= <<>> ->
 			    %% Recurse if we have more data in buffer
 			    handle_data(<<>>, State);
@@ -1401,9 +1412,11 @@ handle_data(NewData,#state{connection=Connection,buff=Buff0} = State0) ->
 			   [{parse_error,Reason},
 			    {buffer, Buff0},
 			    {new_data,NewData}]),
-		    handle_error(Reason, State0#state{buff= <<>>})
+		    handle_error(Reason, State0#state{no_end_tag_buff= <<>>,
+						      buff= <<>>})
 	    end
     end.
+
 
 %% xml does not accept a leading nl and some netconf server add a nl after
 %% each ?END_TAG, ignore them
