@@ -2,7 +2,7 @@
 %%
 %% %CopyrightBegin%
 %%
-%% Copyright Ericsson AB 1996-2015. All Rights Reserved.
+%% Copyright Ericsson AB 1996-2016. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -100,7 +100,7 @@ value_option(Flag, Default, On, OnVal, Off, OffVal, Opts) ->
 %% 'called' and 'exports' contain {Line, {Function, Arity}},
 %% the other function collections contain {Function, Arity}.
 -record(lint, {state=start		:: 'start' | 'attribute' | 'function',
-               module=[],                       %Module
+               module='',                       %Module
                behaviour=[],                    %Behaviour
                exports=gb_sets:empty()	:: gb_sets:set(fa()),%Exports
                imports=[] :: [fa()],            %Imports, an orddict()
@@ -729,7 +729,7 @@ start_state(Form, St) ->
 %% attribute_state(Form, State) ->
 %%      State'
 
-attribute_state({attribute,_L,module,_M}, #lint{module=[]}=St) ->
+attribute_state({attribute,_L,module,_M}, #lint{module=''}=St) ->
     St;
 attribute_state({attribute,L,module,_M}, St) ->
     add_error(L, redefine_module, St);
@@ -3532,6 +3532,8 @@ check_qlc_hrl(Line, M, F, As, St) ->
 %% deprecated_function(Line, ModName, FuncName, [Arg], State) -> State.
 %%  Add warning for calls to deprecated functions.
 
+-dialyzer({no_match, deprecated_function/5}).
+
 deprecated_function(Line, M, F, As, St) ->
     Arity = length(As),
     MFA = {M, F, Arity},
@@ -3559,6 +3561,8 @@ deprecated_function(Line, M, F, As, St) ->
         no ->
 	    St
     end.
+
+-dialyzer({no_match, deprecated_type/5}).
 
 deprecated_type(L, M, N, As, St) ->
     NAs = length(As),

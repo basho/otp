@@ -58,7 +58,7 @@ all() ->
 groups() ->
     [{basic, [], basic_tests()},
      {options, [], options_tests()},
-     {'tlsv1.2', [], all_versions_groups()},
+     {'tlsv1.2', [], all_versions_groups() ++ [conf_signature_algs, no_common_signature_algs]},
      {'tlsv1.1', [], all_versions_groups()},
      {'tlsv1', [], all_versions_groups() ++ rizzo_tests()},
      {'sslv3', [], all_versions_groups() ++ rizzo_tests() ++ [ciphersuite_vs_version]},
@@ -121,6 +121,7 @@ options_tests() ->
 
 api_tests() ->
     [connection_info,
+     connection_information,
      peername,
      peercert,
      peercert_with_client_cert,
@@ -167,6 +168,7 @@ renegotiate_tests() ->
 
 cipher_tests() ->
     [cipher_suites,
+     cipher_suites_mix,
      ciphers_rsa_signed_certs,
      ciphers_rsa_signed_certs_openssl_names,
      ciphers_dsa_signed_certs,
@@ -444,7 +446,7 @@ connection_info(Config) when is_list(Config) ->
 			   {from, self()}, 
 			   {mfa, {?MODULE, connection_info_result, []}},
 			   {options, 
-			    [{ciphers,[{rsa,des_cbc,sha,no_export}]} | 
+			    [{ciphers,[{rsa,des_cbc,sha}]} | 
 			     ClientOpts]}]),
     
     ct:log("Testcase ~p, Client ~p  Server ~p ~n",
@@ -459,6 +461,37 @@ connection_info(Config) when is_list(Config) ->
     
     ssl_test_lib:close(Server),
     ssl_test_lib:close(Client).
+
+%%--------------------------------------------------------------------
+
+connection_information() ->
+    [{doc,"Test the API function ssl:connection_information/1"}].
+connection_information(Config) when is_list(Config) -> 
+    ClientOpts = ?config(client_opts, Config),
+    ServerOpts = ?config(server_opts, Config),
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+    Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0}, 
+					{from, self()}, 
+					{mfa, {?MODULE, connection_information_result, []}},
+					{options, ServerOpts}]),
+    
+    Port = ssl_test_lib:inet_port(Server),
+    Client = ssl_test_lib:start_client([{node, ClientNode}, {port, Port},
+					{host, Hostname},
+			   {from, self()}, 
+			   {mfa, {?MODULE, connection_information_result, []}},
+			   {options, ClientOpts}]),
+    
+    ct:log("Testcase ~p, Client ~p  Server ~p ~n",
+		       [self(), Client, Server]),
+    
+    ServerMsg = ClientMsg = ok,
+			   
+    ssl_test_lib:check_result(Server, ServerMsg, Client, ClientMsg),
+    
+    ssl_test_lib:close(Server),
+    ssl_test_lib:close(Client).
+
 
 %%--------------------------------------------------------------------
 protocol_versions() ->
@@ -878,6 +911,31 @@ cipher_suites(Config) when is_list(Config) ->
     Suites = ssl:cipher_suites(erlang),
     [_|_] =ssl:cipher_suites(openssl).
 
+%%--------------------------------------------------------------------
+cipher_suites_mix() ->
+    [{doc,"Test to have old and new cipher suites at the same time"}].
+
+cipher_suites_mix(Config) when is_list(Config) -> 
+    CipherSuites = [{ecdh_rsa,aes_128_cbc,sha256,sha256}, {rsa,aes_128_cbc,sha}],
+    ClientOpts = ?config(client_opts, Config),
+    ServerOpts = ?config(server_opts, Config),
+
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+
+    Server = ssl_test_lib:start_server([{node, ServerNode}, {port, 0},
+					{from, self()},
+					{mfa, {ssl_test_lib, send_recv_result_active, []}},
+					{options, ServerOpts}]),
+    Port = ssl_test_lib:inet_port(Server),
+    Client = ssl_test_lib:start_client([{node, ClientNode}, {port, Port},
+					{host, Hostname},
+					{from, self()},
+					{mfa, {ssl_test_lib, send_recv_result_active, []}},
+					{options, [{ciphers, CipherSuites} | ClientOpts]}]),
+
+    ssl_test_lib:check_result(Server, ok, Client, ok),
+    ssl_test_lib:close(Server),
+    ssl_test_lib:close(Client).
 %%--------------------------------------------------------------------
 socket_options() ->
     [{doc,"Test API function getopts/2 and setopts/2"}].
@@ -2844,7 +2902,61 @@ ciphersuite_vs_version(Config) when is_list(Config) ->
 	_ ->
 	    ct:fail({unexpected_server_hello, ServerHello})
     end.
-										
+			
+%%--------------------------------------------------------------------
+conf_signature_algs() ->
+    [{doc,"Test to set the signature_algs option on both client and server"}].
+conf_signature_algs(Config) when is_list(Config) -> 
+    ClientOpts = ?config(client_opts, Config),
+    ServerOpts = ?config(server_opts, Config),
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+    Server = 
+	ssl_test_lib:start_server([{node, ServerNode}, {port, 0}, 
+				   {from, self()}, 
+				   {mfa, {ssl_test_lib, send_recv_result, []}},
+				   {options,  [{active, false}, {signature_algs, [{sha256, rsa}]} | ServerOpts]}]),
+    Port = ssl_test_lib:inet_port(Server),
+    Client = 
+	ssl_test_lib:start_client([{node, ClientNode}, {port, Port}, 
+				   {host, Hostname},
+				   {from, self()}, 
+				   {mfa, {ssl_test_lib, send_recv_result, []}},
+				   {options, [{active, false}, {signature_algs, [{sha256, rsa}]} | ClientOpts]}]),
+    
+    ct:log("Testcase ~p, Client ~p  Server ~p ~n",
+			 [self(), Client, Server]),
+    
+    ssl_test_lib:check_result(Server, ok, Client, ok),
+    
+    ssl_test_lib:close(Server),
+    ssl_test_lib:close(Client).
+
+
+%%--------------------------------------------------------------------
+no_common_signature_algs()  ->
+    [{doc,"Set the signature_algs option so that there client and server does not share any hash sign algorithms"}].
+no_common_signature_algs(Config) when is_list(Config) ->
+    
+    ClientOpts = ?config(client_opts, Config),
+    ServerOpts = ?config(server_opts, Config),
+
+    {ClientNode, ServerNode, Hostname} = ssl_test_lib:run_where(Config),
+
+
+    Server = ssl_test_lib:start_server_error([{node, ServerNode}, {port, 0},
+					      {from, self()},
+					      {options, [{signature_algs, [{sha256, rsa}]}
+							 | ServerOpts]}]),
+    Port = ssl_test_lib:inet_port(Server),
+    Client = ssl_test_lib:start_client_error([{node, ClientNode}, {port, Port},
+					      {host, Hostname},
+					      {from, self()}, 
+					      {options, [{signature_algs, [{sha384, rsa}]}
+							 | ClientOpts]}]),
+    
+    ssl_test_lib:check_result(Server, {error, {tls_alert, "insufficient security"}},
+			      Client, {error, {tls_alert, "insufficient security"}}).
+    						
 %%--------------------------------------------------------------------
 
 dont_crash_on_handshake_garbage() ->
@@ -3989,7 +4101,7 @@ run_suites(Ciphers, Version, Config, Type) ->
     end.
 
 erlang_cipher_suite(Suite) when is_list(Suite)->
-    ssl:suite_definition(ssl_cipher:openssl_suite(Suite));
+    ssl_cipher:erl_suite_definition(ssl_cipher:openssl_suite(Suite));
 erlang_cipher_suite(Suite) ->
     Suite.
 
@@ -4010,11 +4122,11 @@ cipher(CipherSuite, Version, Config, ClientOpts, ServerOpts) ->
     Port = ssl_test_lib:inet_port(Server),
     Client = ssl_test_lib:start_client([{node, ClientNode}, {port, Port},
 					{host, Hostname},
-			   {from, self()},
-			   {mfa, {ssl_test_lib, cipher_result, [ConnectionInfo]}},
-			   {options,
-			    [{ciphers,[CipherSuite]} |
-			     ClientOpts]}]),
+					{from, self()},
+					{mfa, {ssl_test_lib, cipher_result, [ConnectionInfo]}},
+					{options,
+					 [{ciphers,[CipherSuite]} |
+					  ClientOpts]}]),
 
     Result = ssl_test_lib:wait_for_result(Server, ok, Client, ok),
 
@@ -4026,6 +4138,17 @@ cipher(CipherSuite, Version, Config, ClientOpts, ServerOpts) ->
 	    [];
 	Error ->
 	    [{ErlangCipherSuite, Error}]
+    end.
+
+connection_information_result(Socket) ->
+    {ok, Info = [_ | _]} = ssl:connection_information(Socket),
+    case  length(Info) > 3 of
+	true -> 
+	    %% Atleast one ssloption() is set
+	    ct:log("Info ~p", [Info]),
+	    ok;
+	false ->
+	    ct:fail(no_ssl_options_returned)
     end.
 
 connection_info_result(Socket) ->
@@ -4153,6 +4276,12 @@ first_rsa_suite([{ecdhe_rsa, _, _} = Suite | _]) ->
 first_rsa_suite([{dhe_rsa, _, _} = Suite| _]) ->
     Suite;
 first_rsa_suite([{rsa, _, _} = Suite| _]) ->
+    Suite;
+first_rsa_suite([{ecdhe_rsa, _, _, _} = Suite | _]) ->
+    Suite;
+first_rsa_suite([{dhe_rsa, _, _, _} = Suite| _]) ->
+    Suite;
+first_rsa_suite([{rsa, _, _, _} = Suite| _]) ->
     Suite;
 first_rsa_suite([_ | Rest]) ->
     first_rsa_suite(Rest).
